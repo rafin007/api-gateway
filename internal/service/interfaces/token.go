@@ -9,6 +9,6 @@ import (
 
 type TokenService interface {
 	GenerateAccessToken(ctx context.Context, user *models.User) (*response.AccessToken, error)
-	// VerifyAccessToken(token string) (bool, error)
+	VerifyAccessToken(ctx context.Context, token string) (*response.TokenClaims, error)
 	GenerateRefreshToken(ctx context.Context, user *models.User) (*models.RefreshToken, error)
 }

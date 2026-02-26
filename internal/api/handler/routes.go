@@ -23,5 +23,11 @@ func SetupRoutes(rc *RouterConfig) {
 		userHandler := NewUserHandler(rc.UserService, rc.Logger)
 		v1.POST("/users/register", userHandler.RegisterUser)
 		v1.POST("/users/login", userHandler.LoginUser)
+
+		authenticated := v1.Group("")
+		authenticated.Use(middleware.Auth(rc.Logger, rc.TokenService))
+		{
+			authenticated.GET("/users/me", userHandler.GetUser)
+		}
 	}
 }

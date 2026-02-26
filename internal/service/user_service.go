@@ -61,7 +61,7 @@ func (s *userService) LoginUser(ctx context.Context, reqUser *request.UserLogin)
 	// hash the password and compare it against the one in database
 	if match := utils.VerifyHashAndPassword(user.PasswordHash, reqUser.Password); !match {
 		s.logger.Errorw("Incorrect password", "email", user.Email)
-		return res, errors.ErrInvalidCredentials
+		return res, errors.ErrUnauthorized
 	}
 
 	// generate access token and refresh token
@@ -77,4 +77,20 @@ func (s *userService) LoginUser(ctx context.Context, reqUser *request.UserLogin)
 	}
 
 	return res, nil
+}
+
+func (s *userService) GetUserByEmail(ctx context.Context, email string) (*models.User, error) {
+	user, err := s.userRepo.GetByEmail(ctx, email)
+	if err != nil {
+		return &models.User{}, err
+	}
+	return user, nil
+}
+
+func (s *userService) GetUserByID(ctx context.Context, ID int64) (*models.User, error) {
+	user, err := s.userRepo.GetByID(ctx, ID)
+	if err != nil {
+		return &models.User{}, err
+	}
+	return user, nil
 }

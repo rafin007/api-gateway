@@ -69,6 +69,27 @@ func (s *tokenService) GenerateAccessToken(ctx context.Context, user *models.Use
 	return response, nil
 }
 
+func (s *tokenService) VerifyAccessToken(ctx context.Context, tokenString string) (*response.TokenClaims, error) {
+	claims := &claims{}
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (interface{}, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			s.logger.Errorw("Invalid signing method", "method", t.Method)
+			return nil, errors.ErrUnauthorized
+		}
+		return []byte(s.config.SigningSecret), nil
+	})
+
+	if err != nil || !token.Valid {
+		s.logger.Errorw("Token not valid", "error", err.Error())
+		return nil, errors.ErrUnauthorized
+	}
+
+	return &response.TokenClaims{
+		Email:  claims.Email,
+		UserID: claims.UserID,
+	}, nil
+}
+
 func (s *tokenService) GenerateRefreshToken(ctx context.Context, user *models.User) (*models.RefreshToken, error) {
 	return nil, nil
 }

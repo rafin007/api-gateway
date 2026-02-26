@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jinzhu/copier"
 	"github.com/rafin007/api-gateway/errors"
+	"github.com/rafin007/api-gateway/internal/api/ctxutil"
 	"github.com/rafin007/api-gateway/internal/api/handler/request"
 	"github.com/rafin007/api-gateway/internal/api/handler/response"
 	"github.com/rafin007/api-gateway/internal/models"
@@ -84,4 +85,22 @@ func (h *userHandler) LoginUser(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, res)
+}
+
+func (h *userHandler) GetUser(c *gin.Context) {
+	authUser, err := ctxutil.GetAuthUser(c, h.logger)
+	if err != nil {
+		appErr := errors.MapServiceError(err)
+		c.Error(appErr)
+		return
+	}
+
+	user, err := h.userService.GetUserByID(c, authUser.UserID)
+	if err != nil {
+		appErr := errors.MapServiceError(err)
+		c.Error(appErr)
+		return
+	}
+
+	c.JSON(http.StatusOK, user)
 }

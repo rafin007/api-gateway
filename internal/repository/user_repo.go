@@ -86,3 +86,33 @@ func (r *userRepo) GetByEmail(ctx context.Context, email string) (*models.User, 
 
 	return &user, nil
 }
+
+func (r *userRepo) GetByID(ctx context.Context, ID int64) (*models.User, error) {
+	var user models.User
+
+	query := `SELECT id, email, password_hash, first_name, last_name, verified, phone, created_at, updated_at 
+			 FROM users WHERE id=$1`
+	err := r.pool.QueryRow(ctx, query, ID).Scan(
+		&user.ID,
+		&user.Email,
+		&user.PasswordHash,
+		&user.FirstName,
+		&user.LastName,
+		&user.Verified,
+		&user.Phone,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
+
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			r.logger.Errorw("User does not exist", "ID", ID, "error", err.Error())
+			return &user, customErr.ErrUserNotFound
+		} else {
+			r.logger.Errorw("Failed to fetch user", "ID", ID, "error", err.Error())
+			return &user, customErr.ErrInternalServerError
+		}
+	}
+
+	return &user, err
+}

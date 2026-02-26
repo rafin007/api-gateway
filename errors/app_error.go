@@ -34,7 +34,14 @@ func Conflict(msg string) *AppError {
 	}
 }
 
-func InvalidCredentials(msg string) *AppError {
+// func InvalidCredentials(msg string) *AppError {
+// 	return &AppError{
+// 		Code:    http.StatusUnauthorized,
+// 		Message: msg,
+// 	}
+// }
+
+func Unauthorized(msg string) *AppError {
 	return &AppError{
 		Code:    http.StatusUnauthorized,
 		Message: msg,

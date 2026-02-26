@@ -11,3 +11,8 @@ type UserResponse struct {
 	models.User
 	AccessToken
 }
+
+type TokenClaims struct {
+	UserID int64
+	Email  string
+}

@@ -11,4 +11,6 @@ import (
 type UserService interface {
 	RegisterUser(ctx context.Context, user *models.User) (*response.AccessToken, error)
 	LoginUser(ctx context.Context, userReq *request.UserLogin) (*response.UserResponse, error)
+	GetUserByEmail(ctx context.Context, email string) (*models.User, error)
+	GetUserByID(ctx context.Context, ID int64) (*models.User, error)
 }
