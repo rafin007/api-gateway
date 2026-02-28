@@ -41,10 +41,11 @@ func Auth(logger *zap.SugaredLogger, tokenService service.TokenService) gin.Hand
 			return
 		}
 
+		logger.Infow("Current user info", "user_id", claims.UserID, "user email", claims.Email)
+
 		// set the user in the gin context
 		c.Set("userID", claims.UserID)
 		c.Set("email", claims.Email)
-
 		c.Next()
 	}
 }

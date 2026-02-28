@@ -15,6 +15,8 @@ func MapServiceError(err error) *AppError {
 		return Conflict(err.Error())
 	// case errors.Is(err, ErrInvalidCredentials):
 	// 	return InvalidCredentials(err.Error())
+	case errors.Is(err, ErrUserNotFound):
+		return NotFound(err.Error())
 	case errors.Is(err, ErrUnauthorized):
 		return Unauthorized(err.Error())
 	default:

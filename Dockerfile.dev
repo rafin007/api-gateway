@@ -1,0 +1,26 @@
+FROM golang:1.25-alpine
+
+# Air requires git (for go install) and gcc/musl-dev (for cgo dependencies)
+RUN apk add --no-cache git gcc musl-dev
+
+# Install Air for hot reloading
+RUN go install github.com/air-verse/air@latest
+
+WORKDIR /app
+
+# Copy dependency manifests and download modules
+# This layer is cached unless go.mod/go.sum change
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Source is mounted as a volume at runtime — no COPY needed here
+# Air watches for file changes and rebuilds automatically
+
+# Disable VCS stamping globally — fixes "error obtaining VCS status"
+# because .git lives at the repo root, not inside the container
+ENV GOFLAGS="-buildvcs=false"
+
+EXPOSE 8080
+
+# Air reads config from .air.toml in the working directory
+CMD ["air", "-c", ".air.toml"]
