@@ -37,12 +37,12 @@ func (s *userService) RegisterUser(ctx context.Context, user *models.User) (*res
 	}
 	user.PasswordHash = hashedPassword
 
-	token, err := s.tokenService.GenerateAccessToken(ctx, user)
+	err = s.userRepo.CreateUser(ctx, user)
 	if err != nil {
 		return res, err
 	}
 
-	err = s.userRepo.CreateUser(ctx, user)
+	token, err := s.tokenService.GenerateAccessToken(ctx, user)
 	if err != nil {
 		return res, err
 	}

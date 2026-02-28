@@ -1,0 +1,15 @@
+services:
+  gateway:
+    # Override the production image build with a dev-specific one
+    build:
+      context: ./
+      dockerfile: Dockerfile.dev
+    # Mount the entire source into the container so Air can detect changes
+    volumes:
+      - ./:/app
+      # Anonymous volume prevents the host's bin/ from overwriting
+      # the container's compiled tmp/ binary
+      - /app/tmp
+    environment:
+      APP_MODE: dev
+      DB_HOST: postgres

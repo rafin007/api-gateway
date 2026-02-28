@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/spf13/viper"
@@ -22,7 +23,32 @@ type Config struct {
 func LoadConfig(path string, file string) (config Config, err error) {
 	viper.AddConfigPath(path)
 	viper.SetConfigFile(file)
+
+	// Tell Viper to replace dots and hyphens with underscores when matching
+	// env vars, e.g. DB.HOST → DB_HOST
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+
 	viper.AutomaticEnv()
+
+	// Explicitly bind each env var to its mapstructure key.
+	// This is required because Viper only auto-resolves env vars for keys
+	// it has already seen — BindEnv registers them unconditionally.
+	envVars := []string{
+		"DB_HOST",
+		"DB_NAME",
+		"DB_PASSWORD",
+		"DB_PORT",
+		"DB_USER",
+		"PORT",
+		"ACCESS_TOKEN_EXPIRY_TIME",
+		"REFRESH_TOKEN_EXPIRY_TIME",
+		"SIGNING_SECRET",
+	}
+	for _, key := range envVars {
+		if err := viper.BindEnv(key); err != nil {
+			return config, err
+		}
+	}
 
 	err = viper.ReadInConfig()
 
