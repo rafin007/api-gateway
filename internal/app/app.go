@@ -25,6 +25,7 @@ func Start(config *config.Config, logger *zap.SugaredLogger, pool *pgxpool.Pool)
 		UserService:  userService,
 		TokenService: tokenService,
 		Logger:       logger,
+		Pool:         pool,
 	})
 
 	if err := router.Run(":" + config.Port); err != nil {
