@@ -17,7 +17,7 @@ services:
     env_file:
       - .env
     environment:
-      APP_MODE: ${APP_MODE}
+      APP_MODE: ${APP_ENV}
       DB_HOST: postgres
     ports:
       - "8080:8080"

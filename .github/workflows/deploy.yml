@@ -4,13 +4,29 @@ on:
   push:
     branches: [ "main" ]
 
+# These permissions are required for OIDC authentication with AWS.
+# id-token: write  → allows the workflow to request a JWT from GitHub's OIDC provider,
+#                    which AWS uses to verify the request and issue temporary credentials.
+# contents: read   → allows the workflow to checkout your repository code.
 permissions:
-  id-token: write   # Required for OIDC
-  contents: read    # Required to checkout code
+  id-token: write
+  contents: read
 
 jobs:
+  # ============================================================
+  # JOB 1: Build & Push
+  # Compiles the Go binary, runs tests, and pushes two Docker
+  # images to ECR: one for the app, one for migrations.
+  # All subsequent jobs depend on this completing successfully.
+  # ============================================================
   build-and-push:
     runs-on: ubuntu-latest
+    # Expose the image tag as a job output so downstream jobs
+    # can reference the exact same SHA-tagged image, preventing
+    # a race condition where 'latest' could be overwritten by a
+    # concurrent pipeline run.
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tag }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -20,29 +36,171 @@ jobs:
         with:
           go-version: '1.25.6'
 
+      # Run tests before building the image so we never push a
+      # broken image to ECR. Failing fast here saves build time
+      # and prevents a bad deployment from reaching production.
       - name: Run Tests
         run: go test -v ./...
 
+      # Exchange the GitHub OIDC token for temporary AWS credentials.
+      # This is the modern alternative to storing long-lived
+      # AWS_ACCESS_KEY_ID/SECRET in GitHub secrets — temporary
+      # credentials expire automatically and are never stored anywhere.
+      # AWS_ROLE_ARN is a secret because it contains your AWS account ID.
+      # AWS_REGION is a variable (non-sensitive config, not a credential).
       - name: Configure AWS Credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          aws-region: ${{ vars.AWS_REGION }}
 
+      # Authenticates Docker with ECR so subsequent docker push
+      # commands are authorized. The registry URL is derived
+      # automatically from the assumed role's account ID.
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build, Tag, and Push Image
+      # Capture the git SHA as the image tag once and share it as a
+      # job output. Using the commit SHA (rather than 'latest') makes
+      # every image traceable back to an exact commit and prevents
+      # ambiguity when rolling back.
+      - name: Set image tag
+        id: meta
+        run: echo "tag=${{ github.sha }}" >> $GITHUB_OUTPUT
+
+      # Build and push the main application image.
+      # We tag with both the SHA (immutable, for traceability) and
+      # 'latest' (mutable, for convenience in the ECS service).
+      - name: Build, Tag, and Push App Image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: api-gateway
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          # Build the docker container
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          
-          # Push to AWS ECR
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker build -t $ECR_REGISTRY/api-gateway:$IMAGE_TAG .
+          docker tag $ECR_REGISTRY/api-gateway:$IMAGE_TAG $ECR_REGISTRY/api-gateway:latest
+          docker push $ECR_REGISTRY/api-gateway:$IMAGE_TAG
+          docker push $ECR_REGISTRY/api-gateway:latest
+
+      # Build and push the migration image separately from the app.
+      # The migration image bakes the SQL files directly into the image
+      # (via Dockerfile.migrate) so the ECS task is self-contained —
+      # no volume mounts or external file access needed in production.
+      - name: Build, Tag, and Push Migration Image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -f Dockerfile.migrate -t $ECR_REGISTRY/api-gateway-migrate:$IMAGE_TAG .
+          docker tag $ECR_REGISTRY/api-gateway-migrate:$IMAGE_TAG $ECR_REGISTRY/api-gateway-migrate:latest
+          docker push $ECR_REGISTRY/api-gateway-migrate:$IMAGE_TAG
+          docker push $ECR_REGISTRY/api-gateway-migrate:latest
+
+  # ============================================================
+  # JOB 2: Migrate
+  # Runs database migrations as a one-off ECS task BEFORE the
+  # new app version is deployed. This ordering guarantee means
+  # the new app code never starts against an unprepared schema.
+  # If migrations fail, the deploy job is blocked entirely.
+  # ============================================================
+  migrate:
+    runs-on: ubuntu-latest
+    # Migrations must not run until both images are successfully
+    # pushed to ECR, ensuring the migration image is available.
+    needs: build-and-push
+    steps:
+      # Each job runs on a fresh runner, so AWS credentials must
+      # be re-established in every job that makes AWS API calls.
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # Launch a one-off ECS task (not a service) to run migrations.
+      # A one-off task runs once, exits, and is never restarted —
+      # appropriate for a short-lived job like a database migration.
+      # assignPublicIp=ENABLED is required because the tasks run in
+      # public subnets (matching the api-gateway-service config) and
+      # need a public IP to reach ECR and SSM at startup.
+      - name: Run DB Migrations
+        id: run-migration
+        run: |
+          TASK_ARN=$(aws ecs run-task \
+            --cluster ${{ vars.ECS_CLUSTER }} \
+            --task-definition ${{ vars.MIGRATE_TASK_DEFINITION }} \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[${{ vars.MIGRATE_SUBNET }}],securityGroups=[${{ vars.MIGRATE_SECURITY_GROUP }}],assignPublicIp=ENABLED}" \
+            --query 'tasks[0].taskArn' \
+            --output text)
+          echo "task-arn=$TASK_ARN" >> $GITHUB_OUTPUT
+
+      # Block the pipeline here until the migration task finishes.
+      # Without this wait, the deploy step could start immediately
+      # while migrations are still running, causing the new app to
+      # start against a partially migrated schema.
+      - name: Wait for Migration Task to Complete
+        run: |
+          aws ecs wait tasks-stopped \
+            --cluster ${{ vars.ECS_CLUSTER }} \
+            --tasks ${{ steps.run-migration.outputs.task-arn }}
+
+      # Inspect the migration container's exit code explicitly.
+      # 'tasks-stopped' only means the task stopped — it does NOT
+      # mean it succeeded. Exit code 0 = success, anything else =
+      # failure. This step fails the pipeline on a non-zero exit,
+      # preventing a broken schema from reaching the deploy step.
+      - name: Check Migration Exit Code
+        run: |
+          EXIT_CODE=$(aws ecs describe-tasks \
+            --cluster ${{ vars.ECS_CLUSTER }} \
+            --tasks ${{ steps.run-migration.outputs.task-arn }} \
+            --query 'tasks[0].containers[0].exitCode' \
+            --output text)
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "Migration failed with exit code $EXIT_CODE"
+            echo "Check CloudWatch logs at: /ecs/api-gateway-migrate"
+            exit 1
+          fi
+          echo "Migrations completed successfully"
+
+  # ============================================================
+  # JOB 3: Deploy
+  # Updates the ECS service to launch new tasks using the latest
+  # image. Only runs after migrations have completed successfully,
+  # guaranteeing schema and app code are always in sync.
+  # ============================================================
+  deploy:
+    runs-on: ubuntu-latest
+    # Explicitly depends on migrate (not build-and-push) so the
+    # full chain is enforced: build → migrate → deploy.
+    needs: migrate
+    steps:
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # Trigger a new deployment by telling ECS to replace running
+      # tasks with new ones using the latest task definition.
+      # --force-new-deployment is required when only the image
+      # contents change (same 'latest' tag) without a task
+      # definition revision, ensuring ECS actually pulls the new image.
+      - name: Deploy to ECS
+        run: |
+          aws ecs update-service \
+            --cluster ${{ vars.ECS_CLUSTER }} \
+            --service ${{ vars.ECS_SERVICE }} \
+            --force-new-deployment
+
+      # Wait until ECS reports the service as stable — meaning the
+      # desired number of new tasks are running and healthy, and all
+      # old tasks have been drained and stopped. This turns the
+      # pipeline into a reliable gate: the workflow only reports
+      # success when traffic is actually being served by the new version.
+      - name: Wait for Deployment to Stabilize
+        run: |
+          aws ecs wait services-stable \
+            --cluster ${{ vars.ECS_CLUSTER }} \
+            --services ${{ vars.ECS_SERVICE }}
