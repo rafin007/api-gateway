@@ -12,23 +12,23 @@ import (
 const (
 	configPath = "./"
 	configFile = ".env"
-	MODE       = "APP_MODE"
+	ENV_NAME   = "APP_ENV"
 )
 
 func main() {
-	mode := os.Getenv(MODE)
+	env := os.Getenv(ENV_NAME)
 
-	if mode != "prod" && mode != "dev" {
-		panic("Error: " + MODE + " must be 'prod' or 'dev'")
+	if env != "production" && env != "development" {
+		panic("Error: " + ENV_NAME + " must be 'production' or 'development'")
 	}
 
-	sugLog := logger.InitLogger(mode)
+	sugLog := logger.InitLogger(env)
 	defer func() {
 		_ = sugLog.Sync()
 	}()
 
 	sugLog.Info("Loading configuration...")
-	config, err := config.LoadConfig(configPath, configFile)
+	config, err := config.LoadConfig(configPath, configFile, env)
 	if err != nil {
 		panic("Error loading configuration: " + err.Error())
 	}

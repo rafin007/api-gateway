@@ -20,7 +20,7 @@ type Config struct {
 	SigningSecret          string `mapstructure:"SIGNING_SECRET" validate:"required"`
 }
 
-func LoadConfig(path string, file string) (config Config, err error) {
+func LoadConfig(path string, file string, env string) (config Config, err error) {
 	viper.AddConfigPath(path)
 	viper.SetConfigFile(file)
 

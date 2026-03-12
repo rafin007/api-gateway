@@ -1,0 +1,5 @@
+FROM ghcr.io/kukymbr/goose-docker:3.24.1
+COPY migrations /migrations
+COPY migrate-entrypoint.sh /migrate-entrypoint.sh
+RUN chmod +x /migrate-entrypoint.sh
+ENTRYPOINT ["/migrate-entrypoint.sh"]
